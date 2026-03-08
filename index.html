@@ -1,0 +1,368 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>French Impatriate Tax Calculator</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { background: #0a0a0f; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <script type="text/babel">
+    const { useState } = React;
+
+    const BRACKETS_2025 = [
+      { min: 0, max: 11497, rate: 0 },
+      { min: 11497, max: 29315, rate: 0.11 },
+      { min: 29315, max: 83823, rate: 0.30 },
+      { min: 83823, max: 180294, rate: 0.41 },
+      { min: 180294, max: Infinity, rate: 0.45 },
+    ];
+
+    const BRACKETS_2024 = [
+      { min: 0, max: 11294, rate: 0 },
+      { min: 11294, max: 28797, rate: 0.11 },
+      { min: 28797, max: 82341, rate: 0.30 },
+      { min: 82341, max: 177106, rate: 0.41 },
+      { min: 177106, max: Infinity, rate: 0.45 },
+    ];
+
+    const BRACKETS_2023 = [
+      { min: 0, max: 10777, rate: 0 },
+      { min: 10777, max: 27478, rate: 0.11 },
+      { min: 27478, max: 78570, rate: 0.30 },
+      { min: 78570, max: 168994, rate: 0.41 },
+      { min: 168994, max: Infinity, rate: 0.45 },
+    ];
+
+    const FAMILY_PARTS = {
+      "Single": 1,
+      "Married/PACS, no children": 2,
+      "Married/PACS, 1 child": 2.5,
+      "Married/PACS, 2 children": 3,
+    };
+
+    const YEAR_META = [
+      { key: "2023", label: "2023", brackets: BRACKETS_2024, status: "refundable", deadline: "31 Dec 2026", note: "Filed 2024 · Claim deadline 31 Dec 2026" },
+      { key: "2024", label: "2024", brackets: BRACKETS_2025, status: "refundable", deadline: "31 Dec 2027", note: "Filed 2025 · Claim deadline 31 Dec 2027" },
+      { key: "2025", label: "2025", brackets: BRACKETS_2025, status: "current",    deadline: null,           note: "File spring 2026" },
+      { key: "2026", label: "2026", brackets: BRACKETS_2025, status: "future",     deadline: null,           note: "Estimated — brackets subject to change" },
+      { key: "2027", label: "2027", brackets: BRACKETS_2025, status: "future",     deadline: null,           note: "Estimated — brackets subject to change" },
+    ];
+
+    const STATUS_STYLES = {
+      refundable: { badge: "⬤ REFUNDABLE", bg: "rgba(200,160,80,0.15)",  color: "#c8a050", rowBg: "rgba(200,160,80,0.04)",  border: "rgba(200,160,80,0.25)" },
+      current:    { badge: "◯ APPLY NOW",  bg: "rgba(80,160,200,0.15)",  color: "#50a0c8", rowBg: "rgba(80,160,200,0.03)",  border: "rgba(80,160,200,0.2)" },
+      future:     { badge: "◯ FUTURE",     bg: "rgba(100,100,140,0.15)", color: "#6a6a9a", rowBg: "transparent",            border: "#1e1e2e" },
+    };
+
+    function calcRowData(gross, brackets, parts, exemptionPct) {
+      const deduction = Math.min(gross * 0.10, 14171);
+      const net = gross - deduction;
+      const perPartFull = net / parts;
+      let taxWithoutPerPart = 0;
+      for (const b of brackets) {
+        if (perPartFull <= b.min) break;
+        taxWithoutPerPart += (Math.min(perPartFull, b.max) - b.min) * b.rate;
+      }
+      const taxWithout = taxWithoutPerPart * parts;
+      const exemption = Math.min(gross * (exemptionPct / 100), net * 0.30);
+      const taxableWithRegime = Math.max(net - exemption, net * 0.70);
+      const perPartWith = taxableWithRegime / parts;
+      let taxWithPerPart = 0;
+      for (const b of brackets) {
+        if (perPartWith <= b.min) break;
+        taxWithPerPart += (Math.min(perPartWith, b.max) - b.min) * b.rate;
+      }
+      const taxWith = taxWithPerPart * parts;
+      return {
+        gross, net, deduction, exemption, taxableWithRegime,
+        taxWithout, taxWith,
+        saving: taxWithout - taxWith,
+        effWithout: (taxWithout / gross) * 100,
+        effWith: (taxWith / gross) * 100,
+      };
+    }
+
+    function formatEur(n) {
+      return new Intl.NumberFormat("fr-FR", { style: "currency", currency: "EUR", maximumFractionDigits: 0 }).format(n);
+    }
+
+    function SalaryRow({ meta, value, onChange }) {
+      const st = STATUS_STYLES[meta.status];
+      return (
+        <div style={{
+          background: "#12121c",
+          border: `1px solid ${st.border}`,
+          borderRadius: "8px",
+          padding: "16px 20px",
+        }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "10px" }}>
+            <div>
+              <span style={{ fontSize: "17px", color: "#f0ebe0", fontWeight: "bold" }}>{meta.label}</span>
+              <span style={{
+                marginLeft: "10px", fontSize: "9px", letterSpacing: "1.5px",
+                padding: "2px 8px", borderRadius: "20px",
+                background: st.bg, color: st.color,
+              }}>{st.badge}</span>
+              {meta.deadline && (
+                <div style={{ fontSize: "10px", color: "#c8a050", marginTop: "4px" }}>⏰ Deadline: {meta.deadline}</div>
+              )}
+            </div>
+            <div style={{ fontSize: "20px", color: "#c8a050", fontFamily: "monospace", textAlign: "right" }}>
+              {formatEur(value)}
+            </div>
+          </div>
+          <input
+            type="range" min="30000" max="300000" step="1000"
+            value={value}
+            onChange={e => onChange(Number(e.target.value))}
+            style={{ width: "100%", accentColor: "#c8a050", cursor: "pointer", margin: "4px 0" }}
+          />
+          <div style={{ display: "flex", justifyContent: "space-between", marginTop: "4px" }}>
+            <span style={{ fontSize: "10px", color: "#3a3a4a" }}>€30k</span>
+            <span style={{ fontSize: "10px", color: "#4a4a5a" }}>{meta.note}</span>
+            <span style={{ fontSize: "10px", color: "#3a3a4a" }}>€300k</span>
+          </div>
+        </div>
+      );
+    }
+
+    function App() {
+      const [salaries, setSalaries] = useState({ "2023": 80000, "2024": 80000, "2025": 80000, "2026": 80000, "2027": 80000 });
+      const [family, setFamily] = useState("Single");
+      const [bonusMethod, setBonusMethod] = useState("flatrate");
+      const [customPct, setCustomPct] = useState(30);
+
+      const parts = FAMILY_PARTS[family];
+      const exemptPct = bonusMethod === "flatrate" ? 30 : customPct;
+
+      const rows = YEAR_META.map(meta => ({
+        ...meta,
+        ...calcRowData(salaries[meta.key], meta.brackets, parts, exemptPct),
+      }));
+
+      const refundableRows = rows.filter(r => r.status === "refundable");
+      const forwardRows = rows.filter(r => r.status !== "refundable");
+      const totalRefund = refundableRows.reduce((s, r) => s + r.saving, 0);
+      const totalFuture = forwardRows.reduce((s, r) => s + r.saving, 0);
+      const grandTotal = totalRefund + totalFuture;
+
+      const updateSalary = (year, val) => setSalaries(s => ({ ...s, [year]: val }));
+
+      return (
+        <div style={{ minHeight: "100vh", background: "#0a0a0f", color: "#e8e4dc", fontFamily: "'Georgia', 'Times New Roman', serif" }}>
+
+          {/* Header */}
+          <div style={{
+            background: "linear-gradient(135deg, #1a1a2e 0%, #0a0a0f 60%)",
+            borderBottom: "1px solid #2a2a3e",
+            padding: "36px 40px 28px",
+            position: "relative", overflow: "hidden",
+          }}>
+            <div style={{
+              position: "absolute", top: "-40px", right: "-40px", width: "320px", height: "320px",
+              background: "radial-gradient(circle, rgba(200,160,80,0.08) 0%, transparent 70%)",
+              pointerEvents: "none",
+            }} />
+            <div style={{ fontSize: "11px", letterSpacing: "4px", color: "#c8a050", textTransform: "uppercase", marginBottom: "10px" }}>
+              Régime des Impatriés · Article 155 B CGI
+            </div>
+            <h1 style={{ margin: 0, fontSize: "26px", fontWeight: "normal", letterSpacing: "1px", color: "#f0ebe0" }}>
+              Tax Refund Calculator
+            </h1>
+            <p style={{ margin: "6px 0 0", color: "#8a8070", fontSize: "13px" }}>
+              France · 2023–2027 · Per-year salary inputs · Official barème
+            </p>
+          </div>
+
+          <div style={{ padding: "28px 40px", maxWidth: "960px", margin: "0 auto" }}>
+
+            {/* Global settings */}
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "14px", marginBottom: "24px" }}>
+              <div style={{ background: "#12121c", border: "1px solid #1e1e2e", borderRadius: "8px", padding: "18px 20px" }}>
+                <label style={{ fontSize: "10px", letterSpacing: "3px", color: "#c8a050", textTransform: "uppercase", display: "block", marginBottom: "10px" }}>
+                  Family Situation
+                </label>
+                <select
+                  value={family}
+                  onChange={e => setFamily(e.target.value)}
+                  style={{ background: "#1a1a2e", border: "1px solid #2a2a3e", color: "#e8e4dc", padding: "8px 12px", borderRadius: "4px", width: "100%", fontSize: "13px" }}
+                >
+                  {Object.keys(FAMILY_PARTS).map(k => <option key={k}>{k}</option>)}
+                </select>
+              </div>
+
+              <div style={{ background: "#12121c", border: "1px solid #1e1e2e", borderRadius: "8px", padding: "18px 20px" }}>
+                <label style={{ fontSize: "10px", letterSpacing: "3px", color: "#c8a050", textTransform: "uppercase", display: "block", marginBottom: "10px" }}>
+                  Exemption Method
+                </label>
+                <div style={{ display: "flex", gap: "8px", marginBottom: bonusMethod === "actual" ? "12px" : "0" }}>
+                  {[{ val: "flatrate", label: "Flat-rate 30%" }, { val: "actual", label: "Custom %" }].map(opt => (
+                    <div key={opt.val} onClick={() => setBonusMethod(opt.val)} style={{
+                      flex: 1, padding: "8px 10px", borderRadius: "5px", cursor: "pointer", textAlign: "center",
+                      border: bonusMethod === opt.val ? "1px solid #c8a050" : "1px solid #2a2a3e",
+                      background: bonusMethod === opt.val ? "rgba(200,160,80,0.10)" : "#0a0a0f",
+                      fontSize: "12px", color: bonusMethod === opt.val ? "#c8a050" : "#8a8070",
+                      transition: "all 0.15s",
+                    }}>{opt.label}</div>
+                  ))}
+                </div>
+                {bonusMethod === "actual" && (
+                  <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+                    <input
+                      type="range" min="5" max="50" step="1"
+                      value={customPct}
+                      onChange={e => setCustomPct(Number(e.target.value))}
+                      style={{ flex: 1, accentColor: "#c8a050" }}
+                    />
+                    <span style={{ fontSize: "16px", color: "#f0ebe0", minWidth: "38px", textAlign: "right" }}>{customPct}%</span>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Per-year salary inputs */}
+            <div style={{ marginBottom: "28px" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "14px" }}>
+                <div style={{ fontSize: "10px", letterSpacing: "4px", color: "#c8a050", textTransform: "uppercase" }}>
+                  Salary Per Year
+                </div>
+                <button
+                  onClick={() => {
+                    const base = salaries["2025"];
+                    setSalaries({ "2023": base, "2024": base, "2025": base, "2026": base, "2027": base });
+                  }}
+                  style={{
+                    background: "rgba(200,160,80,0.08)", border: "1px solid rgba(200,160,80,0.25)",
+                    color: "#c8a050", padding: "5px 14px", borderRadius: "4px",
+                    fontSize: "10px", letterSpacing: "1.5px", cursor: "pointer", textTransform: "uppercase",
+                  }}
+                >
+                  Sync all to 2025 ({formatEur(salaries["2025"])})
+                </button>
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px" }}>
+                {YEAR_META.map(meta => (
+                  <SalaryRow
+                    key={meta.key}
+                    meta={meta}
+                    value={salaries[meta.key]}
+                    onChange={val => updateSalary(meta.key, val)}
+                  />
+                ))}
+              </div>
+            </div>
+
+            {/* Totals banner */}
+            <div style={{
+              background: "linear-gradient(135deg, rgba(200,160,80,0.10), rgba(200,160,80,0.02))",
+              border: "1px solid rgba(200,160,80,0.28)",
+              borderRadius: "10px", padding: "22px 28px", marginBottom: "28px",
+              display: "grid", gridTemplateColumns: "1fr 1px 1fr 1px 1fr",
+              alignItems: "center",
+            }}>
+              {[
+                { title: "Retroactive Refund", value: totalRefund, sub: "2023 + 2024 · Claim now", color: "#f0ebe0" },
+                null,
+                { title: "Future Savings", value: totalFuture, sub: "2025–2027 · 3 years remaining", color: "#8a8aaa" },
+                null,
+                { title: "Total Benefit", value: grandTotal, sub: "Over 5 years", color: "#c8a050" },
+              ].map((item, i) => item === null
+                ? <div key={i} style={{ width: "1px", background: "#2a2a3e", alignSelf: "stretch" }} />
+                : (
+                  <div key={i} style={{ padding: "0 20px" }}>
+                    <div style={{ fontSize: "10px", letterSpacing: "2px", color: "#6a6560", textTransform: "uppercase", marginBottom: "6px" }}>{item.title}</div>
+                    <div style={{ fontSize: "32px", color: item.color, letterSpacing: "-1px" }}>{formatEur(item.value)}</div>
+                    <div style={{ fontSize: "11px", color: "#5a5560", marginTop: "4px" }}>{item.sub}</div>
+                  </div>
+                )
+              )}
+            </div>
+
+            {/* Detailed table */}
+            <div style={{ marginBottom: "28px" }}>
+              <div style={{ fontSize: "10px", letterSpacing: "4px", color: "#c8a050", textTransform: "uppercase", marginBottom: "14px" }}>
+                Year-by-Year Breakdown
+              </div>
+              <div style={{ border: "1px solid #1e1e30", borderRadius: "8px", overflow: "hidden" }}>
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "12px" }}>
+                  <thead>
+                    <tr style={{ background: "#0d0d18", borderBottom: "1px solid #1e1e30" }}>
+                      {["Year", "Gross", "Exempt", "Taxable", "Tax without", "Tax with", "Saving"].map((h, i) => (
+                        <th key={i} style={{
+                          padding: "11px 14px", textAlign: i < 1 ? "left" : "right",
+                          color: "#4a4a5a", fontWeight: "normal", fontSize: "10px",
+                          letterSpacing: "1.5px", textTransform: "uppercase",
+                        }}>{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {rows.map((row, i) => {
+                      const st = STATUS_STYLES[row.status];
+                      return (
+                        <tr key={i} style={{ borderBottom: "1px solid #14141e", background: st.rowBg }}>
+                          <td style={{ padding: "13px 14px" }}>
+                            <div style={{ display: "flex", alignItems: "center", gap: "7px" }}>
+                              <span style={{ color: "#f0ebe0", fontWeight: "bold", fontSize: "14px" }}>{row.label}</span>
+                              <span style={{ fontSize: "9px", letterSpacing: "1px", padding: "2px 7px", borderRadius: "20px", background: st.bg, color: st.color, whiteSpace: "nowrap" }}>
+                                {st.badge}
+                              </span>
+                            </div>
+                            {row.deadline && <div style={{ fontSize: "10px", color: "#c8a050", marginTop: "3px" }}>⏰ {row.deadline}</div>}
+                          </td>
+                          <td style={{ padding: "13px 14px", textAlign: "right", color: "#e8e4dc" }}>{formatEur(row.gross)}</td>
+                          <td style={{ padding: "13px 14px", textAlign: "right", color: "#c8a050" }}>{formatEur(row.exemption)}</td>
+                          <td style={{ padding: "13px 14px", textAlign: "right", color: "#8a8070" }}>{formatEur(row.taxableWithRegime)}</td>
+                          <td style={{ padding: "13px 14px", textAlign: "right", color: "#6a6070" }}>{formatEur(row.taxWithout)}</td>
+                          <td style={{ padding: "13px 14px", textAlign: "right", color: "#e8e4dc" }}>{formatEur(row.taxWith)}</td>
+                          <td style={{ padding: "13px 14px", textAlign: "right" }}>
+                            <div style={{ color: "#c8a050", fontWeight: "bold", fontSize: "13px" }}>{formatEur(row.saving)}</div>
+                            <div style={{ fontSize: "10px", color: "#5a5560", marginTop: "2px" }}>
+                              {row.effWithout.toFixed(1)}% → {row.effWith.toFixed(1)}%
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                  <tfoot>
+                    <tr style={{ background: "#12121c", borderTop: "2px solid #2a2a3e" }}>
+                      <td colSpan={5} style={{ padding: "13px 14px", color: "#6a6560", fontSize: "11px", letterSpacing: "1px", textTransform: "uppercase" }}>
+                        Total estimated benefit (5 years)
+                      </td>
+                      <td style={{ padding: "13px 14px", textAlign: "right" }}>
+                        <div style={{ fontSize: "10px", color: "#5a5560" }}>Refundable</div>
+                        <div style={{ color: "#f0ebe0", fontSize: "13px" }}>{formatEur(totalRefund)}</div>
+                      </td>
+                      <td style={{ padding: "13px 14px", textAlign: "right" }}>
+                        <div style={{ fontSize: "10px", color: "#5a5560" }}>Grand total</div>
+                        <div style={{ color: "#c8a050", fontSize: "18px" }}>{formatEur(grandTotal)}</div>
+                      </td>
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
+            </div>
+
+            {/* Disclaimer */}
+            <div style={{ background: "#0a0a12", border: "1px solid #1a1a28", borderRadius: "8px", padding: "16px 20px", fontSize: "11px", color: "#5a5560", lineHeight: "1.7" }}>
+              <div style={{ color: "#8a8070", marginBottom: "5px", letterSpacing: "2px", textTransform: "uppercase", fontSize: "10px" }}>⚠ Important Caveats</div>
+              Indicative estimate using official French barème (2023, 2024 &amp; 2025 tax scales). Years 2026–2027 use 2025 brackets as a proxy — actual brackets are set annually by the Finance Law and will differ. Figures exclude social charges (CSG/CRDS), tax credits, and treaty provisions. The flat-rate 30% exemption does not require a contract amendment; a custom % requires the bonus to be contractually specified before starting employment. <strong style={{ color: "#8a8070" }}>Consult a qualified avocat fiscaliste before filing any amended return.</strong> Critical deadline: <strong style={{ color: "#c8a050" }}>31 December 2026</strong> to recover 2023 overpaid tax.
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  </script>
+</body>
+</html>
