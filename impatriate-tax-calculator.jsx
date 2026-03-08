@@ -1,5 +1,4 @@
-import { useState, useEffect, useRef } from "react";
-import React from "react";
+const { useState, useEffect, useRef } = React;
 
 // Official barèmes keyed by INCOME YEAR (année des revenus), not declaration year.
 // Sources: Légifrance art. 197 CGI, BOFiP, Lois de finances annuelles.
@@ -250,7 +249,7 @@ function SalaryCell({ value, onChange }) {
   );
 }
 
-export default function App() {
+function App() {
   const [arrivalYear, setArrivalYear] = useState(2020);
   const [arrivalDraft, setArrivalDraft] = useState("2020");
   const [salaries, setSalaries] = useState({});
@@ -619,3 +618,5 @@ export default function App() {
     </div>
   );
 }
+
+ReactDOM.createRoot(document.getElementById("root")).render(React.createElement(App));
