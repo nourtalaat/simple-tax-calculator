@@ -215,7 +215,7 @@ function calcRowData(gross, year, parts, exemptPct) {
   const saving = Math.max(0, taxWithout - taxWith);
   return {
     gross, net, deduction, exemption, rawExemption, cappedByGlobal, taxableWithRegime,
-    taxWithout, taxWith, saving, estimated,
+    taxWithout, taxWith, netPostTax: gross - taxWith, saving, estimated,
     effWithout: (taxWithout / gross) * 100,
     effWith: (taxWith / gross) * 100,
   };
@@ -327,7 +327,7 @@ function calcRowDataNL(gross, year, arrivalYear, profile) {
     belowMinSalary, minSalary, cappedGross,
     taxBeforeCreditsWithout, taxBeforeCreditsWith,
     algKortingWithout, arbKortingWithout, algKortingWith, arbKortingWith,
-    taxWithout, taxWith, saving, estimated,
+    taxWithout, taxWith, netPostTax: gross - taxWith, saving, estimated,
     effWithout: (taxWithout / gross) * 100,
     effWith: (taxWith / gross) * 100,
   };
@@ -778,11 +778,13 @@ function App() {
                         { label: "Taxable Income", value: formatEur(row.taxableWithRegime), color: "#8a8aff", sub: `of ${formatEur(row.net)}` },
                         { label: "Tax without", value: formatEur(row.taxWithout), color: "#6a6070", sub: null },
                         { label: "Tax with", value: formatEur(row.taxWith), color: "#e8e4dc", sub: null },
+                        { label: "Net Post-Tax", value: formatEur(row.netPostTax), color: "#a0d0a0", sub: null },
                       ] : [
                         { label: "Exempt", value: formatEur(row.exemption), color: "#c8a050", sub: `${row.rulingPct}% ruling${row.wntCapApplied ? " · ⚠ WNT cap" : ""}` },
                         { label: "Taxable Income", value: formatEur(row.taxable), color: "#8a8aff", sub: row.belowMinSalary ? "⚠ Below min salary" : null },
                         { label: "Tax without", value: formatEur(row.taxWithout), color: "#6a6070", sub: null },
                         { label: "Tax with", value: formatEur(row.taxWith), color: "#e8e4dc", sub: null },
+                        { label: "Net Post-Tax", value: formatEur(row.netPostTax), color: "#a0d0a0", sub: null },
                       ]).map(({ label, value, color, sub }) => (
                         <div key={label}>
                           <div style={{ fontSize: "9px", color: "#5a5560", letterSpacing: "1px", textTransform: "uppercase", marginBottom: "2px" }}>{label}</div>
@@ -822,7 +824,7 @@ function App() {
               {/* Column headers */}
               <div style={{
                 display: "grid",
-                gridTemplateColumns: "60px 130px 1fr 1fr 1fr 1fr 1fr 1fr",
+                gridTemplateColumns: "60px 130px 1fr 1fr 1fr 1fr 1fr 1fr 1fr",
                 gap: "0 8px",
                 padding: "8px 14px",
                 background: "#0d0d18",
@@ -838,15 +840,17 @@ function App() {
                   { label: "Taxable Income", tip: "Your net taxable income after applying the impatriate exemption and the 10% frais professionnels deduction (art. 83 CGI). This is the base on which your income tax is actually computed under the regime." },
                   { label: "Tax without", tip: "Estimated income tax without the impatriate regime, computed on your net salary after the 10% frais professionnels deduction only, using the official progressive barème (art. 197 CGI) for this income year." },
                   { label: "Tax with", tip: "Estimated income tax with the impatriate regime applied, computed on the reduced taxable base (after exemption). The difference between this and 'Tax without' is your annual saving." },
+                  { label: "Net Post-Tax", tip: "Your estimated annual take-home pay after income tax: Gross salary minus Tax with regime. Does not deduct social charges (CSG/CRDS)." },
                   { label: "Saving", tip: "Annual tax saving = Tax without regime − Tax with regime. The percentage shown is your effective tax rate (tax ÷ gross salary) shifting from the standard rate to the impatriate rate." },
                 ] : [
                   { label: "Year", tip: "The income year. The 30% ruling applies from your year of arrival for up to 5 calendar years." },
                   { label: "Status", tip: "PAST: tax year already completed. APPLY NOW: current tax year. FUTURE: upcoming years where the ruling will apply." },
-                  { label: "Gross Salary", tip: "Your gross annual salary (brut jaarloon). Click any value to adjust it with a slider or by typing." },
+                  { label: "Gross Salary", tip: "Your gross annual salary including 8% holiday allowance (vakantiegeld). This is your total fiscal jaarloon as shown on your jaaropgave. Click any value to adjust it with a slider or by typing." },
                   { label: "Exempt", tip: "The 30% ruling exemption: the tax-free portion of your salary. Applied to gross up to the WNT salary cap (Wet normering topinkomens)." },
                   { label: "Taxable Income", tip: "Your taxable income after applying the 30% ruling exemption (gross minus exempt amount). This is the base for Box 1 income tax + volksverzekeringen." },
                   { label: "Tax without", tip: "Estimated Box 1 tax without the 30% ruling, on your full gross salary, minus heffingskortingen (algemene heffingskorting + arbeidskorting)." },
                   { label: "Tax with", tip: "Estimated Box 1 tax with the 30% ruling applied, on the reduced taxable base, minus heffingskortingen." },
+                  { label: "Net Post-Tax", tip: "Your estimated annual take-home pay after income tax: Gross salary minus Tax with ruling. Does not deduct social insurance contributions separately." },
                   { label: "Saving", tip: "Annual tax saving = Tax without ruling − Tax with ruling. The percentage shown is your effective tax rate shifting from the standard rate to the ruling rate." },
                 ]).map(({ label, tip }, i) => (
                   <div key={i} style={{
@@ -874,7 +878,7 @@ function App() {
                       {/* Main data row */}
                       <div style={{
                         display: "grid",
-                        gridTemplateColumns: "60px 130px 1fr 1fr 1fr 1fr 1fr 1fr",
+                        gridTemplateColumns: "60px 130px 1fr 1fr 1fr 1fr 1fr 1fr 1fr",
                         gap: "0 8px",
                         padding: "12px 14px",
                         alignItems: "center",
@@ -975,6 +979,11 @@ function App() {
                           <div style={{ textAlign: "right", color: "#e8e4dc", fontSize: "13px", cursor: "help" }}>{formatEur(row.taxWith)}</div>
                         </Tooltip>
 
+                        {/* Net Post-Tax */}
+                        <Tooltip text={`Take-home pay: ${formatEur(row.gross)} gross − ${formatEur(row.taxWith)} tax = ${formatEur(row.netPostTax)}.`}>
+                          <div style={{ textAlign: "right", color: "#a0d0a0", fontSize: "13px", cursor: "help" }}>{formatEur(row.netPostTax)}</div>
+                        </Tooltip>
+
                         {/* Saving */}
                         <div style={{ textAlign: "right" }}>
                           {isExpired ? (
@@ -998,14 +1007,14 @@ function App() {
                 {/* Footer totals */}
                 <div style={{
                   display: "grid",
-                  gridTemplateColumns: "60px 130px 1fr 1fr 1fr 1fr 1fr 1fr",
+                  gridTemplateColumns: "60px 130px 1fr 1fr 1fr 1fr 1fr 1fr 1fr",
                   gap: "0 8px",
                   padding: "13px 14px",
                   background: "#12121c",
                   borderTop: "2px solid #2a2a3e",
                   alignItems: "center",
                 }}>
-                  <div style={{ gridColumn: "1 / 7", fontSize: "10px", color: "#6a6560", letterSpacing: "1px", textTransform: "uppercase" }}>
+                  <div style={{ gridColumn: "1 / 8", fontSize: "10px", color: "#6a6560", letterSpacing: "1px", textTransform: "uppercase" }}>
                     Total · {rows.filter(r => r.status !== "expired").length} active years
                   </div>
                   <div style={{ textAlign: "right" }}>
