@@ -343,23 +343,38 @@ function Tooltip({ text, children }) {
   const [pos, setPos] = useState({ top: 0, left: 0 });
   const ref = useRef(null);
 
-  const show = () => {
-    if (ref.current) {
-      const r = ref.current.getBoundingClientRect();
-      setPos({
-        top: r.bottom + 8,
-        left: Math.max(8, Math.min(r.left + r.width / 2 - 140, window.innerWidth - 288)),
-      });
-    }
-    setVisible(true);
+  const computePos = () => {
+    if (!ref.current) return;
+    const r = ref.current.getBoundingClientRect();
+    const estimatedHeight = 120;
+    const fitsBelow = r.bottom + 8 + estimatedHeight <= window.innerHeight;
+    setPos({
+      top: fitsBelow ? r.bottom + 8 : r.top - 8 - estimatedHeight,
+      left: Math.max(8, Math.min(r.left + r.width / 2 - 140, window.innerWidth - 288)),
+    });
   };
+
+  const show = () => { computePos(); setVisible(true); };
+
+  const toggle = (e) => {
+    e.stopPropagation();
+    if (visible) { setVisible(false); } else { show(); }
+  };
+
+  useEffect(() => {
+    if (!visible) return;
+    const close = () => setVisible(false);
+    document.addEventListener("click", close);
+    return () => document.removeEventListener("click", close);
+  }, [visible]);
 
   return (
     <span ref={ref} style={{ display: "inline-block", cursor: "help" }}
-      onMouseEnter={show} onMouseLeave={() => setVisible(false)}>
+      onMouseEnter={show} onMouseLeave={() => setVisible(false)}
+      onClick={toggle}>
       {children}
       {visible && (
-        <span style={{
+        <span onClick={(e) => e.stopPropagation()} style={{
           position: "fixed",
           top: pos.top,
           left: pos.left,
@@ -372,7 +387,6 @@ function Tooltip({ text, children }) {
           lineHeight: "1.6",
           color: "#e8e4dc",
           zIndex: 9999,
-          pointerEvents: "none",
           boxShadow: "0 8px 28px rgba(0,0,0,0.85)",
           whiteSpace: "normal",
           textAlign: "left",
