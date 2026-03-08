@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+const { useState, useEffect } = React;
 
 // Known official barèmes keyed by the year they APPLY TO (income year)
 const KNOWN_BRACKETS = {
@@ -176,7 +176,7 @@ function SalaryCell({ value, onChange }) {
   );
 }
 
-export default function App() {
+function App() {
   const [arrivalYear, setArrivalYear] = useState(2020);
   const [arrivalDraft, setArrivalDraft] = useState("2020");
   const [salaries, setSalaries] = useState({});
@@ -468,3 +468,5 @@ export default function App() {
     </div>
   );
 }
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App />);
