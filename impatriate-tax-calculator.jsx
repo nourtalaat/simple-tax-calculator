@@ -42,9 +42,9 @@ const KNOWN_BRACKETS = {
     // Source: art. 2 LFI 2026 / economie.gouv.fr
     { min: 0, max: 11600, rate: 0 },
     { min: 11600, max: 29579, rate: 0.11 },
-    { min: 29579, max: 84578, rate: 0.30 },
-    { min: 84578, max: 181921, rate: 0.41 },
-    { min: 181921, max: Infinity, rate: 0.45 },
+    { min: 29579, max: 84577, rate: 0.30 },
+    { min: 84577, max: 181917, rate: 0.41 },
+    { min: 181917, max: Infinity, rate: 0.45 },
   ],
 };
 
@@ -57,6 +57,24 @@ const DEDUCTION_CAP = {
   2024: 14426,  // source: service-public.fr (impôts 2025 sur revenus 2024)
   2025: 14555,  // source: service-public.fr (impôts 2026 sur revenus 2025)
 };
+
+// Décote (art. 197 I-4° CGI) — réduction d'impôt pour petits contribuables
+// Source: BOFiP BOI-IR-LIQUIDATION-20-20-20, Lois de finances annuelles
+const DECOTE_PARAMS = {
+  2021: { single: { montant: 790, seuil: 1745 }, couple: { montant: 1307, seuil: 2888 } },
+  2022: { single: { montant: 833, seuil: 1841 }, couple: { montant: 1378, seuil: 3045 } },
+  2023: { single: { montant: 873, seuil: 1929 }, couple: { montant: 1444, seuil: 3191 } },
+  2024: { single: { montant: 889, seuil: 1965 }, couple: { montant: 1470, seuil: 3249 } },
+  2025: { single: { montant: 897, seuil: 1982 }, couple: { montant: 1483, seuil: 3277 } },
+};
+
+function getDecoteParams(year) {
+  const keys = Object.keys(DECOTE_PARAMS).map(Number).sort((a, b) => b - a);
+  for (const k of keys) {
+    if (year >= k) return DECOTE_PARAMS[k];
+  }
+  return DECOTE_PARAMS[keys[keys.length - 1]];
+}
 
 const CURRENT_YEAR = 2025;
 const ARRIVAL_MAX_YEAR = CURRENT_YEAR + 1; // allow planning a move next year
@@ -150,12 +168,14 @@ const NL_WNT_CAP = {
 const NL_MIN_SALARY = {
   2024: { standard: 46107, msc30: 35048 },
   2025: { standard: 46660, msc30: 35468 },
+  2026: { standard: 48013, msc30: 36497 },
 };
 
 // Algemene heffingskorting (general tax credit)
 const NL_ALGEMENE_KORTING = {
   2024: { max: 3362, phaseOutStart: 24812, phaseOutRate: 0.06630 },
   2025: { max: 3068, phaseOutStart: 28406, phaseOutRate: 0.06337 },
+  2026: { max: 3115, phaseOutStart: 29736, phaseOutRate: 0.06398 },
 };
 
 // Arbeidskorting (employment tax credit) — piecewise tiers
@@ -174,6 +194,13 @@ const NL_ARBEIDSKORTING = {
     { max: 129078, base: 5599, rate: -0.06510, offset: 43071 },
     { max: Infinity, base: 0, rate: 0, offset: 0 },
   ],
+  2026: [
+    { max: 11965, base: 0, rate: 0.08324, offset: 0 },
+    { max: 25845, base: 996, rate: 0.31009, offset: 11965 },
+    { max: 45592, base: 5300, rate: 0.01950, offset: 25845 },
+    { max: 132920, base: 5685, rate: -0.06510, offset: 45592 },
+    { max: Infinity, base: 0, rate: 0, offset: 0 },
+  ],
 };
 
 function calcTax(net, brackets, parts) {
@@ -184,6 +211,13 @@ function calcTax(net, brackets, parts) {
     t += (Math.min(perPart, b.max) - b.min) * b.rate;
   }
   return t * parts;
+}
+
+function calcDecote(taxBrute, parts, year) {
+  const params = getDecoteParams(year);
+  const { montant, seuil } = parts > 1 ? params.couple : params.single;
+  if (taxBrute >= seuil || taxBrute === 0) return 0;
+  return Math.min(Math.max(0, montant - taxBrute * 0.4525), taxBrute);
 }
 
 function calcRowData(gross, year, parts, exemptPct) {
@@ -210,11 +244,16 @@ function calcRowData(gross, year, parts, exemptPct) {
   // at least 50% of gross remains taxable. The floor here matches the 50% ceiling.
   const taxableWithRegime = Math.max(net - exemption, net * 0.50);
 
-  const taxWithout = calcTax(net, brackets, parts);
-  const taxWith = calcTax(taxableWithRegime, brackets, parts);
+  const taxBruteWithout = calcTax(net, brackets, parts);
+  const taxBruteWith = calcTax(taxableWithRegime, brackets, parts);
+  const decoteWithout = calcDecote(taxBruteWithout, parts, year);
+  const decoteWith = calcDecote(taxBruteWith, parts, year);
+  const taxWithout = taxBruteWithout - decoteWithout;
+  const taxWith = taxBruteWith - decoteWith;
   const saving = Math.max(0, taxWithout - taxWith);
   return {
     gross, net, deduction, exemption, rawExemption, cappedByGlobal, taxableWithRegime,
+    taxBruteWithout, taxBruteWith, decoteWithout, decoteWith,
     taxWithout, taxWith, netPostTax: gross - taxWith, saving, estimated,
     effWithout: (taxWithout / gross) * 100,
     effWith: (taxWith / gross) * 100,
@@ -790,14 +829,14 @@ function App() {
                       {(country === "FR" ? [
                         { label: "Exempt", value: formatEur(row.exemption), color: "#c8a050", sub: row.cappedByGlobal ? "⚠ 50% cap" : null },
                         { label: "Taxable Income", value: formatEur(row.taxableWithRegime), color: "#8a8aff", sub: `of ${formatEur(row.net)}` },
-                        { label: "Tax without", value: formatEur(row.taxWithout), color: "#6a6070", sub: null },
-                        { label: "Tax with", value: formatEur(row.taxWith), color: "#e8e4dc", sub: null },
+                        { label: "Tax without", value: formatEur(row.taxWithout), color: "#6a6070", sub: row.decoteWithout > 0 ? `décote −${formatEur(row.decoteWithout)}` : null },
+                        { label: "Tax with", value: formatEur(row.taxWith), color: "#e8e4dc", sub: row.decoteWith > 0 ? `décote −${formatEur(row.decoteWith)}` : null },
                         { label: "Net Post-Tax", value: formatEur(row.netPostTax), color: "#a0d0a0", sub: null },
                       ] : [
                         { label: "Exempt", value: formatEur(row.exemption), color: "#c8a050", sub: `${row.rulingPct}% ruling${row.wntCapApplied ? " · ⚠ WNT cap" : ""}` },
                         { label: "Taxable Income", value: formatEur(row.taxable), color: "#8a8aff", sub: row.belowMinSalary ? "⚠ Below min salary" : null },
-                        { label: "Tax without", value: formatEur(row.taxWithout), color: "#6a6070", sub: null },
-                        { label: "Tax with", value: formatEur(row.taxWith), color: "#e8e4dc", sub: null },
+                        { label: "Tax without", value: formatEur(row.taxWithout), color: "#6a6070", sub: `credits −${formatEur(row.algKortingWithout + row.arbKortingWithout)}` },
+                        { label: "Tax with", value: formatEur(row.taxWith), color: "#e8e4dc", sub: `credits −${formatEur(row.algKortingWith + row.arbKortingWith)}` },
                         { label: "Net Post-Tax", value: formatEur(row.netPostTax), color: "#a0d0a0", sub: null },
                       ]).map(({ label, value, color, sub }) => (
                         <div key={label}>
@@ -979,18 +1018,30 @@ function App() {
 
                         {/* Tax without */}
                         <Tooltip text={country === "FR"
-                          ? `Progressive barème (art. 197 CGI) applied to ${formatEur(row.net)} net imposable (gross minus 10% deduction). Divided by ${parts} part(s) for quotient familial, taxed by bracket, then multiplied back. No impatriate exemption applied here.`
+                          ? `Progressive barème (art. 197 CGI) applied to ${formatEur(row.net)} net imposable: ${formatEur(row.taxBruteWithout)} brut${row.decoteWithout > 0 ? ` − ${formatEur(row.decoteWithout)} décote (art. 197 I-4°)` : ""}. Divided by ${parts} part(s) for quotient familial, taxed by bracket, then multiplied back. No impatriate exemption applied here.`
                           : `Box 1 tax on ${formatEur(row.gross)}: ${formatEur(row.taxBeforeCreditsWithout)} before credits. Minus algemene heffingskorting (${formatEur(row.algKortingWithout)}) + arbeidskorting (${formatEur(row.arbKortingWithout)}).`
                         }>
-                          <div style={{ textAlign: "right", color: "#6a6070", fontSize: "13px", cursor: "help" }}>{formatEur(row.taxWithout)}</div>
+                          <div style={{ textAlign: "right", cursor: "help" }}>
+                            <div style={{ color: "#6a6070", fontSize: "13px" }}>{formatEur(row.taxWithout)}</div>
+                            {country === "FR"
+                              ? row.decoteWithout > 0 && <div style={{ fontSize: "9px", color: "#5a5560", marginTop: "2px" }}>décote −{formatEur(row.decoteWithout)}</div>
+                              : <div style={{ fontSize: "9px", color: "#5a5560", marginTop: "2px" }}>credits −{formatEur(row.algKortingWithout + row.arbKortingWithout)}</div>
+                            }
+                          </div>
                         </Tooltip>
 
                         {/* Tax with */}
                         <Tooltip text={country === "FR"
-                          ? `Progressive barème (art. 197 CGI) applied to the reduced taxable base of ${formatEur(row.taxableWithRegime)} (after impatriate exemption). Divided by ${parts} part(s), taxed by bracket, then multiplied back.`
+                          ? `Progressive barème (art. 197 CGI) applied to the reduced taxable base of ${formatEur(row.taxableWithRegime)} (after impatriate exemption): ${formatEur(row.taxBruteWith)} brut${row.decoteWith > 0 ? ` − ${formatEur(row.decoteWith)} décote (art. 197 I-4°)` : ""}. Divided by ${parts} part(s), taxed by bracket, then multiplied back.`
                           : `Box 1 tax on ${formatEur(row.taxable)}: ${formatEur(row.taxBeforeCreditsWith)} before credits. Minus algemene heffingskorting (${formatEur(row.algKortingWith)}) + arbeidskorting (${formatEur(row.arbKortingWith)}).`
                         }>
-                          <div style={{ textAlign: "right", color: "#e8e4dc", fontSize: "13px", cursor: "help" }}>{formatEur(row.taxWith)}</div>
+                          <div style={{ textAlign: "right", cursor: "help" }}>
+                            <div style={{ color: "#e8e4dc", fontSize: "13px" }}>{formatEur(row.taxWith)}</div>
+                            {country === "FR"
+                              ? row.decoteWith > 0 && <div style={{ fontSize: "9px", color: "#5a5560", marginTop: "2px" }}>décote −{formatEur(row.decoteWith)}</div>
+                              : <div style={{ fontSize: "9px", color: "#5a5560", marginTop: "2px" }}>credits −{formatEur(row.algKortingWith + row.arbKortingWith)}</div>
+                            }
+                          </div>
                         </Tooltip>
 
                         {/* Net Post-Tax */}
@@ -1056,7 +1107,7 @@ function App() {
         <div style={{ background: "#0a0a12", border: "1px solid #1a1a28", borderRadius: "8px", padding: "16px 20px", fontSize: "11px", color: "#5a5560", lineHeight: "1.7" }}>
           <div style={{ color: "#8a8070", marginBottom: "5px", letterSpacing: "2px", textTransform: "uppercase", fontSize: "10px" }}>⚠ Important Caveats</div>
           {country === "FR"
-            ? <>Indicative estimates using official French barèmes (2021–2025 income years exact; earlier/future years use nearest known scale, marked "est."). Barèmes source: art. 197 CGI / Lois de finances / Légifrance. The 2025-income barème (LFI 2026, promulguée 19 fév. 2026, +0.9%) is official. Déduction forfaitaire 10% caps are indexed per year (BOI-BAREME-000035). The flat-rate 30% prime exemption is calculated on gross salary before the 10% deduction (BOFiP BOI-RSA-GEO-40-10-20 §90). The 50% global ceiling on the exempt amount is enforced per art. 155 B I CGI / BOFiP §290. Figures exclude social charges (CSG/CRDS ~17.2%), tax credits, and treaty provisions. The "rémunération de référence" floor (salary for analogous role in same company) is not independently verifiable here and is approximated conservatively. <strong style={{ color: "#8a8070" }}>Consult a qualified avocat fiscaliste before filing any amended return.</strong></>
+            ? <>Indicative estimates using official French barèmes (2021–2025 income years exact; earlier/future years use nearest known scale, marked "est."). Barèmes source: art. 197 CGI / Lois de finances / Légifrance. The 2025-income barème (LFI 2026, promulguée 19 fév. 2026, +0.9%) is official. Déduction forfaitaire 10% caps are indexed per year (BOI-BAREME-000035). The flat-rate 30% prime exemption is calculated on gross salary before the 10% deduction (BOFiP BOI-RSA-GEO-40-10-20 §90). The 50% global ceiling on the exempt amount is enforced per art. 155 B I CGI / BOFiP §290. Figures exclude social charges (CSG/CRDS ~17.2%), other tax credits beyond the décote (art. 197 I-4° CGI), and treaty provisions. The "rémunération de référence" floor (salary for analogous role in same company) is not independently verifiable here and is approximated conservatively. <strong style={{ color: "#8a8070" }}>Consult a qualified avocat fiscaliste before filing any amended return.</strong></>
             : <>Indicative estimates using official Dutch Box 1 brackets (2024–2026 exact; other years use nearest known scale, marked "est."). Sources: Belastingdienst, Belastingplan 2024/2025. Box 1 rates include income tax (inkomstenbelasting) and social insurance contributions (volksverzekeringen). Tax credits include algemene heffingskorting and arbeidskorting, computed per official piecewise formulas. The 30% ruling exemption is subject to the WNT salary cap (Wet normering topinkomens). The minimum salary threshold must be met after applying the ruling. The 27% rate from 2027 for post-2023 arrivals reflects Belastingplan 2024 transitional rules. Figures do not include local taxes, Box 2/3 income, or toeslagen. <strong style={{ color: "#8a8070" }}>Consult a belastingadviseur before making tax decisions.</strong></>
           }
         </div>
